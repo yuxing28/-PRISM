@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, Radar } from 'recharts';
 import { cn } from "@/lib/utils";
 

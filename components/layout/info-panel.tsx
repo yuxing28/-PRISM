@@ -1,6 +1,7 @@
 "use client";
 
-import { AlertCircle, BarChart3, ShieldCheck, Download, Gauge, Radar, Share2 } from "lucide-react";
+import { useState } from "react";
+import { AlertCircle, BarChart3, ShieldCheck, Download, Gauge, Radar, Share2, Play, Ban, TrendingUp, Clock, CheckCircle, X } from "lucide-react";
 import { useDecisionStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { DimensionRadar } from "@/components/ui/dimension-radar";
@@ -11,7 +12,20 @@ const MODE_INFO = {
     complete: { label: '完整模式', desc: '3-5小时+ · 战略级', color: 'bg-violet-500' },
 };
 
-function generateReport(session: any) {
+type SessionForReport = {
+    title: string;
+    messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+    analysis: {
+        score: number;
+        risk_level: string;
+        entropy: number;
+        risk_factors: string[];
+    };
+    createdAt: number;
+    isDebateMode: boolean;
+};
+
+function generateReport(session: SessionForReport) {
     const { title, messages, analysis, createdAt, isDebateMode } = session;
     const date = new Date(createdAt).toLocaleString('zh-CN');
     
@@ -56,7 +70,7 @@ function generateReport(session: any) {
 
 `;
 
-    messages.forEach((msg: any) => {
+    messages.forEach((msg) => {
         const role = msg.role === 'user' ? '👤 用户' : '🤖 智镜';
         report += `### ${role}\n\n${msg.content}\n\n---\n\n`;
     });
@@ -70,7 +84,7 @@ function generateReport(session: any) {
     return report;
 }
 
-function downloadReport(session: any) {
+function downloadReport(session: SessionForReport) {
     const report = generateReport(session);
     const blob = new Blob([report], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -83,7 +97,7 @@ function downloadReport(session: any) {
     URL.revokeObjectURL(url);
 }
 
-function shareSession(session: any) {
+function shareSession(session: SessionForReport) {
     // 生成分享文本
     const { title, analysis } = session;
     const shareText = `【智镜 PRISM 决策分析】
@@ -114,7 +128,15 @@ ${analysis.risk_factors.length > 0 ? '关键风险:\n' + analysis.risk_factors.m
 }
 
 export function InfoPanel() {
-    const { sessions, currentSessionId, setDecisionMode } = useDecisionStore();
+    const { sessions, currentSessionId, setDecisionMode, setReviewReminder, setReviewResult } = useDecisionStore();
+
+    const [showReviewModal, setShowReviewModal] = useState(false);
+    const [reviewForm, setReviewForm] = useState({
+        actualResult: '',
+        wasCorrect: false,
+        lessons: ''
+    });
+    const [reminderWeeks, setReminderWeeks] = useState(4);
 
     const currentSession = sessions.find(s => s.id === currentSessionId);
 
@@ -124,13 +146,35 @@ export function InfoPanel() {
         risk_level: "待评估", 
         entropy: 0, 
         risk_factors: [],
-        dimensions: { logic: 0, feasibility: 0, risk: 0, value: 0, timing: 0, resource: 0 }
+        dimensions: { logic: 0, feasibility: 0, risk: 0, value: 0, timing: 0, resource: 0 },
+        decision_type: "",
+        min_viable_action: { summary: "", reason: "", how_to_verify: "" },
+        stop_loss: { condition: "", action: "", reason: "" },
+        escalation: { condition: "", action: "", reason: "" },
+        score_interpretation: "",
+        risk_priorities: [],
+        mode_recommendation: undefined,
+        info_progress: undefined
     };
     const isDebateMode = currentSession?.isDebateMode || false;
     const decisionMode = currentSession?.decisionMode || 'standard';
 
+    const isUnassessed = !currentSession || (
+        analysis.score === 0 &&
+        analysis.entropy === 0 &&
+        analysis.risk_level === "待评估" &&
+        analysis.risk_factors.length === 0 &&
+        Object.values(analysis.dimensions || {}).every(v => v === 0)
+    );
+
+    const evaluationTag = isUnassessed
+        ? { text: "未评估", className: "bg-slate-200/70 text-slate-500 border-slate-300/60" }
+        : analysis.entropy < 50
+            ? { text: "初评", className: "bg-amber-100 text-amber-700 border-amber-200" }
+            : { text: "复评", className: "bg-emerald-100 text-emerald-700 border-emerald-200" };
+
     // Risk Status logic
-    const hasHighRisk = analysis.risk_level.includes("高") || analysis.risk_level.includes("致命");
+    const hasHighRisk = !isUnassessed && (analysis.risk_level.includes("高") || analysis.risk_level.includes("致命"));
 
     return (
         <aside className="w-full h-full lg:flex flex-col relative z-10 bg-transparent overflow-y-auto custom-scrollbar">
@@ -173,7 +217,23 @@ export function InfoPanel() {
                 <div className="flex items-center gap-2 px-1">
                     <ShieldCheck className={cn("w-5 h-5", isDebateMode ? "text-rose-500" : "text-sky-500")} />
                     <h3 className="font-bold text-slate-800 text-sm tracking-tight uppercase tracking-widest">决策实效概览</h3>
+                    <span className={cn(
+                        "ml-auto px-2 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border",
+                        evaluationTag.className
+                    )}>
+                        {evaluationTag.text}
+                    </span>
                 </div>
+
+                {/* 决策类型标签 */}
+                {analysis.decision_type && (
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs text-slate-500 font-medium">决策类型：</span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-violet-100 text-violet-700 border border-violet-200">
+                            {analysis.decision_type}
+                        </span>
+                    </div>
+                )}
 
                 <div className="p-1">
                     <div className="space-y-5">
@@ -184,7 +244,7 @@ export function InfoPanel() {
                                     "font-black text-4xl tracking-tighter",
                                     isDebateMode ? "text-rose-600" : "text-sky-600"
                                 )}>
-                                    {analysis.score}
+                                    {isUnassessed ? "--" : analysis.score}
                                 </span>
                                 <span className="text-xs font-bold text-slate-400">/ 10</span>
                             </div>
@@ -194,24 +254,74 @@ export function InfoPanel() {
                             <div
                                 className={cn(
                                     "h-full transition-all duration-1000",
-                                    isDebateMode ? "bg-rose-500" : "bg-sky-500"
+                                    isUnassessed
+                                        ? "bg-slate-300"
+                                        : isDebateMode
+                                            ? "bg-rose-500"
+                                            : "bg-sky-500"
                                 )}
-                                style={{ width: `${analysis.score * 10}%` }}
+                                style={{ width: `${isUnassessed ? 0 : analysis.score * 10}%` }}
                             />
                         </div>
+
+                        {/* 评分解读 */}
+                        {!isUnassessed && analysis.score_interpretation && (
+                            <div className="p-3 rounded-xl bg-slate-50/50 border border-slate-200/30">
+                                <p className="text-xs text-slate-600 leading-relaxed">
+                                    {analysis.score_interpretation}
+                                </p>
+                            </div>
+                        )}
 
                         <div className="flex justify-between items-center text-xs">
                             <span className="text-slate-500 font-medium">风险评定</span>
                             <span className={cn(
                                 "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tight shadow-sm transition-colors duration-500",
-                                hasHighRisk ? "bg-rose-500 text-white" : "bg-cyan-500 text-white"
+                                isUnassessed
+                                    ? "bg-slate-300 text-slate-600"
+                                    : hasHighRisk
+                                        ? "bg-rose-500 text-white"
+                                        : "bg-cyan-500 text-white"
                             )}>
-                                {analysis.risk_level}
+                                {isUnassessed ? "未评估" : analysis.risk_level}
                             </span>
                         </div>
                     </div>
                 </div>
             </div>
+
+            {/* 模式推荐卡片 */}
+            {analysis.mode_recommendation && (
+                <div className="p-6 space-y-4 dashboard-divider">
+                    <div className="flex items-center gap-2 px-1">
+                        <Gauge className="w-5 h-5 text-violet-500" />
+                        <h3 className="font-bold text-slate-800 text-sm tracking-tight uppercase tracking-widest">模式推荐</h3>
+                    </div>
+
+                    <div className="p-4 rounded-2xl bg-violet-50/50 border border-violet-200/60">
+                        <div className="flex items-center gap-2 mb-2">
+                            <span className="text-sm font-bold text-violet-700">
+                                建议使用「{analysis.mode_recommendation.recommended === 'fast' ? '快速' : analysis.mode_recommendation.recommended === 'standard' ? '标准' : '完整'}模式」
+                            </span>
+                            {analysis.mode_recommendation.estimated_time && (
+                                <span className="text-xs text-violet-500">
+                                    {analysis.mode_recommendation.estimated_time}
+                                </span>
+                            )}
+                        </div>
+                        {analysis.mode_recommendation.reason && (
+                            <p className="text-xs text-slate-600 leading-relaxed">
+                                {analysis.mode_recommendation.reason}
+                            </p>
+                        )}
+                        {analysis.mode_recommendation.alternative && (
+                            <p className="text-xs text-slate-500 mt-2">
+                                {analysis.mode_recommendation.alternative}
+                            </p>
+                        )}
+                    </div>
+                </div>
+            )}
 
             {/* Entropy Dashboard Section */}
             <div className="p-6 space-y-4 dashboard-divider">
@@ -236,12 +346,34 @@ export function InfoPanel() {
                             />
                         </div>
                         <p className="text-[10px] text-slate-400 leading-relaxed">
-                            {analysis.entropy < 30 ? "信息不足，建议补充更多决策背景" : 
-                             analysis.entropy < 60 ? "信息基本充足，可继续深入分析" : 
-                             analysis.entropy < 80 ? "信息较为完备，分析结果可信度高" :
-                             "信息高度完备，决策依据充分"}
+                            {isUnassessed
+                                ? "发送你的决策问题后开始评估，并随补充信息实时更新"
+                                : analysis.entropy < 30
+                                    ? "信息不足，当前为初评，建议补充更多决策背景"
+                                    : analysis.entropy < 60
+                                        ? "信息基本够用，评分会随你补充信息继续更新"
+                                        : analysis.entropy < 80
+                                            ? "信息较为完备，分析结果可信度较高"
+                                            : "信息高度完备，决策依据充分"}
                         </p>
                     </div>
+
+                    {/* 信息收集进度详情 */}
+                    {analysis.info_progress && analysis.info_progress.needed.length > 0 && (
+                        <div className="mt-4 p-3 rounded-2xl glass-card-premium">
+                            <div className="text-[10px] font-bold text-amber-600 mb-2">
+                                待补充信息 ({analysis.info_progress.current}/{analysis.info_progress.min_required})
+                            </div>
+                            <div className="space-y-1">
+                                {analysis.info_progress.needed.slice(0, 3).map((item, i) => (
+                                    <div key={i} className="flex items-center gap-1.5 text-[9px] text-slate-500">
+                                        <span className="w-1 h-1 rounded-full bg-amber-400" />
+                                        {item}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -258,6 +390,65 @@ export function InfoPanel() {
                 />
             </div>
 
+            {/* 行动方案卡片 */}
+            {!isUnassessed && analysis.min_viable_action?.summary && (
+                <div className="p-6 space-y-4 dashboard-divider">
+                    <div className="flex items-center gap-2 px-1">
+                        <Play className="w-5 h-5 text-emerald-500" />
+                        <h3 className="font-bold text-slate-800 text-sm tracking-tight uppercase tracking-widest">行动方案</h3>
+                    </div>
+
+                    <div className="space-y-4">
+                        {/* 最小行动 */}
+                        <div className="p-4 rounded-2xl bg-emerald-50/50 border border-emerald-200/60">
+                            <div className="flex items-center gap-2 mb-2">
+                                <Play className="w-4 h-4 text-emerald-500" />
+                                <span className="text-xs font-bold text-emerald-700">最小行动</span>
+                            </div>
+                            <p className="text-sm font-bold text-slate-700">{analysis.min_viable_action.summary}</p>
+                            {analysis.min_viable_action.reason && (
+                                <p className="text-xs text-slate-500 mt-1">目的：{analysis.min_viable_action.reason}</p>
+                            )}
+                            {analysis.min_viable_action.how_to_verify && (
+                                <p className="text-xs text-slate-500">验证：{analysis.min_viable_action.how_to_verify}</p>
+                            )}
+                        </div>
+
+                        {/* 止损条件 */}
+                        {analysis.stop_loss?.condition && (
+                            <div className="p-4 rounded-2xl bg-rose-50/50 border border-rose-200/60">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <Ban className="w-4 h-4 text-rose-500" />
+                                    <span className="text-xs font-bold text-rose-700">止损条件</span>
+                                </div>
+                                <p className="text-sm font-bold text-slate-700">
+                                    如果 {analysis.stop_loss.condition} → {analysis.stop_loss.action}
+                                </p>
+                                {analysis.stop_loss.reason && (
+                                    <p className="text-xs text-slate-500 mt-1">原因：{analysis.stop_loss.reason}</p>
+                                )}
+                            </div>
+                        )}
+
+                        {/* 追加条件 */}
+                        {analysis.escalation?.condition && (
+                            <div className="p-4 rounded-2xl bg-sky-50/50 border border-sky-200/60">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <TrendingUp className="w-4 h-4 text-sky-500" />
+                                    <span className="text-xs font-bold text-sky-700">追加条件</span>
+                                </div>
+                                <p className="text-sm font-bold text-slate-700">
+                                    如果 {analysis.escalation.condition} → {analysis.escalation.action}
+                                </p>
+                                {analysis.escalation.reason && (
+                                    <p className="text-xs text-slate-500 mt-1">原因：{analysis.escalation.reason}</p>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
             {/* v1.8 Standardized AI Feedback Card */}
             <div className="p-6 space-y-4 dashboard-divider">
                 <div className="flex items-center gap-2 px-1">
@@ -271,12 +462,40 @@ export function InfoPanel() {
                 )}>
                     {analysis.risk_factors.length > 0 ? (
                         <ul className="space-y-3 text-[11px] leading-relaxed font-bold text-slate-600">
-                            {analysis.risk_factors.map((risk, i) => (
-                                <li key={i} className="flex gap-2.5">
-                                    <span className={cn("mt-1 flex-shrink-0 w-1.5 h-1.5 rounded-full", hasHighRisk ? "bg-rose-400" : "bg-sky-400")} />
-                                    <span>{risk}</span>
-                                </li>
-                            ))}
+                            {analysis.risk_factors.map((risk, i) => {
+                                // 获取优先级
+                                const priority = analysis.risk_priorities?.[i]?.priority || 
+                                    (hasHighRisk ? 'high' : 'medium');
+                                const priorityColors = {
+                                    high: 'bg-rose-500 text-white',
+                                    medium: 'bg-amber-500 text-white',
+                                    low: 'bg-emerald-500 text-white'
+                                };
+                                const priorityLabels = {
+                                    high: '高',
+                                    medium: '中',
+                                    low: '低'
+                                };
+                                return (
+                                    <li key={i} className="flex items-start gap-2">
+                                        <span className={cn(
+                                            "mt-0.5 flex-shrink-0 w-1.5 h-1.5 rounded-full",
+                                            priority === 'high' ? 'bg-rose-400' : priority === 'medium' ? 'bg-amber-400' : 'bg-emerald-400'
+                                        )} />
+                                        <div className="flex-1">
+                                            <span>{risk}</span>
+                                            {analysis.risk_priorities?.[i] && (
+                                                <span className={cn(
+                                                    "ml-2 px-1.5 py-0.5 rounded text-[9px] font-black uppercase",
+                                                    priorityColors[priority]
+                                                )}>
+                                                    {priorityLabels[priority]}优先
+                                                </span>
+                                            )}
+                                        </div>
+                                    </li>
+                                );
+                            })}
                         </ul>
                     ) : (
                         <div className="flex flex-col items-center justify-center py-6 space-y-3 opacity-40">
@@ -320,7 +539,123 @@ export function InfoPanel() {
                 <p className="text-[10px] text-slate-400 text-center font-medium">
                     导出 Markdown 报告 · 分享决策摘要
                 </p>
+
+                {/* 复盘入口 */}
+                {currentSession && currentSession.analysis.score > 0 && (
+                    <div className="pt-4 border-t border-slate-200/30">
+                        {!currentSession.reviewResult ? (
+                            <button
+                                onClick={() => setShowReviewModal(true)}
+                                className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl glass-card-premium text-sky-600 border border-sky-200/50 font-bold text-sm hover:shadow-lg hover:shadow-sky-500/20 transition-all"
+                            >
+                                <Clock className="w-4 h-4" />
+                                <span>设置复盘提醒</span>
+                            </button>
+                        ) : (
+                            <div className="p-4 rounded-2xl glass-card-premium">
+                                <div className="flex items-center gap-2 text-emerald-600 font-bold text-xs mb-1">
+                                    <CheckCircle className="w-4 h-4" />
+                                    已完成复盘
+                                </div>
+                                <p className="text-[10px] text-slate-600 line-clamp-2">
+                                    {currentSession.reviewResult.lessons}
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
+
+            {/* 复盘 Modal */}
+            {showReviewModal && currentSession && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/20 backdrop-blur-sm">
+                    <div className="glass-card-premium w-full max-w-md p-6 animate-in zoom-in-95 duration-200">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="font-bold text-lg text-slate-800">设置复盘提醒</h3>
+                            <button onClick={() => setShowReviewModal(false)} className="p-2 hover:bg-white/50 rounded-full">
+                                <X className="w-5 h-5 text-slate-400" />
+                            </button>
+                        </div>
+
+                        {!currentSession.reviewResult ? (
+                            <>
+                                <p className="text-sm text-slate-600 mb-4">
+                                    决策需要时间验证结果。请设置提醒时间，到期后回顾这个决策的实际结果。
+                                </p>
+
+                                <div className="space-y-3 mb-6">
+                                    <p className="text-xs font-bold text-slate-500">多久后复盘？</p>
+                                    <div className="flex gap-2">
+                                        {[1, 2, 3, 6].map(weeks => (
+                                            <button
+                                                key={weeks}
+                                                onClick={() => setReminderWeeks(weeks)}
+                                                className={cn(
+                                                    "flex-1 py-2 rounded-xl text-sm font-bold transition-all",
+                                                    reminderWeeks === weeks
+                                                        ? "bg-violet-500 text-white"
+                                                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                                                )}
+                                            >
+                                                {weeks}个月
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <button
+                                    onClick={() => {
+                                        const reminderTime = Date.now() + reminderWeeks * 30 * 24 * 60 * 60 * 1000;
+                                        setReviewReminder(currentSession.id, reminderTime);
+                                        setShowReviewModal(false);
+                                    }}
+                                    className="w-full py-3 rounded-xl bg-violet-500 text-white font-bold hover:bg-violet-600 transition-all"
+                                >
+                                    设置提醒
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                <div className="space-y-4 mb-6">
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 mb-1 block">实际发生了什么？</label>
+                                        <textarea
+                                            value={reviewForm.actualResult}
+                                            onChange={(e) => setReviewForm({...reviewForm, actualResult: e.target.value})}
+                                            className="w-full p-3 rounded-xl border border-slate-200 text-sm resize-none"
+                                            rows={2}
+                                            placeholder="描述决策的实际结果..."
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 mb-1 block">经验教训</label>
+                                        <textarea
+                                            value={reviewForm.lessons}
+                                            onChange={(e) => setReviewForm({...reviewForm, lessons: e.target.value})}
+                                            className="w-full p-3 rounded-xl border border-slate-200 text-sm resize-none"
+                                            rows={2}
+                                            placeholder="这次决策给你什么启发？"
+                                        />
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        setReviewResult(currentSession.id, {
+                                            actualResult: reviewForm.actualResult,
+                                            wasCorrect: reviewForm.wasCorrect,
+                                            lessons: reviewForm.lessons
+                                        });
+                                        setShowReviewModal(false);
+                                    }}
+                                    className="w-full py-3 rounded-xl bg-emerald-500 text-white font-bold hover:bg-emerald-600 transition-all"
+                                >
+                                    保存复盘
+                                </button>
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
         </aside>
     );
 }

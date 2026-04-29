@@ -42,6 +42,40 @@ interface AnalysisState {
         timing: number;     // 时机适当性
         resource: number;   // 资源充足度
     };
+    // 新增字段
+    decision_type?: string;  // 决策类型
+    min_viable_action?: {
+        summary: string;
+        reason: string;
+        how_to_verify: string;
+    };
+    stop_loss?: {
+        condition: string;
+        action: string;
+        reason: string;
+    };
+    escalation?: {
+        condition: string;
+        action: string;
+        reason: string;
+    };
+    score_interpretation?: string;
+    risk_priorities?: Array<{
+        factor: string;
+        priority: 'high' | 'medium' | 'low';
+    }>;
+    mode_recommendation?: {
+        recommended: 'fast' | 'standard' | 'complete';
+        reason: string;
+        estimated_time: string;
+        alternative?: string;
+    };
+    info_progress?: {
+        collected: string[];
+        needed: string[];
+        min_required: number;
+        current: number;
+    };
 }
 
 interface Session {
@@ -53,6 +87,14 @@ interface Session {
     isDebateMode: boolean;
     decisionMode: 'fast' | 'standard' | 'complete';
     createdAt: number;
+    // 复盘相关
+    reviewReminder?: number;  // 复盘提醒时间戳
+    reviewResult?: {
+        actualResult: string;    // 实际发生了什么
+        wasCorrect: boolean;     // 当初判断是否正确
+        lessons: string;         // 经验教训
+        completedAt: number;     // 复盘完成时间
+    };
 }
 
 interface DecisionStore {
@@ -68,6 +110,10 @@ interface DecisionStore {
     apiKey: string;
     showSettings: boolean;
 
+    // First time user
+    hasSeenGuide: boolean;
+    setHasSeenGuide: (seen: boolean) => void;
+
     // User Memory - 跨会话记忆
     userMemory: UserMemory;
 
@@ -78,13 +124,18 @@ interface DecisionStore {
     renameSession: (id: string, title: string) => void;
 
     // Message & Analysis Actions (scoped to current session)
-    addMessage: (msg: Message) => void;
-    streamMessageChunk: (chunk: string) => void;
-    updateLastMessage: (content: string) => void;
-    setAnalysisData: (data: Partial<AnalysisState>) => void;
+    addMessage: (msg: Message, sessionId?: string) => void;
+    streamMessageChunk: (chunk: string, sessionId?: string) => void;
+    updateLastMessage: (content: string, sessionId?: string) => void;
+    setAnalysisData: (data: Partial<AnalysisState>, sessionId?: string) => void;
     setEntropyProgress: (progress: number) => void;
     setDebateMode: (enabled: boolean) => void;
     setDecisionMode: (mode: 'fast' | 'standard' | 'complete') => void;
+
+    // Review Actions
+    setReviewReminder: (sessionId: string, reminderTime: number) => void;
+    setReviewResult: (sessionId: string, result: { actualResult: string; wasCorrect: boolean; lessons: string }) => void;
+    getSessionsWithPendingReviews: () => Session[];
 
     // User Memory Actions
     updateUserMemory: (data: Partial<UserMemory>) => void;
@@ -125,7 +176,10 @@ export const useDecisionStore = create<DecisionStore>()(
             mobilePanelOpen: false,
             apiKey: '',
             showSettings: false,
+            hasSeenGuide: false,
             userMemory: defaultUserMemory,
+
+            setHasSeenGuide: (seen) => set({ hasSeenGuide: seen }),
 
             setCurrentSessionId: (id) => set({ currentSessionId: id }),
 
@@ -152,12 +206,42 @@ export const useDecisionStore = create<DecisionStore>()(
                     entropyProgress: 0,
                     isDebateMode: false,
                     decisionMode: 'standard',
-                    createdAt: Date.now()
+                    createdAt: Date.now(),
+                    reviewReminder: undefined,
+                    reviewResult: undefined
                 };
                 set((state) => ({
                     sessions: [newSession, ...state.sessions],
                     currentSessionId: newId
                 }));
+            },
+
+            setReviewReminder: (sessionId, reminderTime) => set((state) => ({
+                sessions: state.sessions.map(s => 
+                    s.id === sessionId ? { ...s, reviewReminder: reminderTime } : s
+                )
+            })),
+
+            setReviewResult: (sessionId, result) => set((state) => ({
+                sessions: state.sessions.map(s => 
+                    s.id === sessionId ? { 
+                        ...s, 
+                        reviewResult: {
+                            ...result,
+                            completedAt: Date.now()
+                        }
+                    } : s
+                )
+            })),
+
+            getSessionsWithPendingReviews: () => {
+                const state = get();
+                const now = Date.now();
+                return state.sessions.filter(s => 
+                    s.reviewReminder && 
+                    s.reviewReminder <= now && 
+                    !s.reviewResult
+                );
             },
 
             deleteSession: (id) => set((state) => {
@@ -176,8 +260,9 @@ export const useDecisionStore = create<DecisionStore>()(
                 sessions: state.sessions.map(s => s.id === id ? { ...s, title } : s)
             })),
 
-            addMessage: (msg) => set((state) => {
-                const currentSession = state.sessions.find(s => s.id === state.currentSessionId);
+            addMessage: (msg, sessionId) => set((state) => {
+                const targetSessionId = sessionId ?? state.currentSessionId;
+                const currentSession = state.sessions.find(s => s.id === targetSessionId);
                 if (!currentSession) return state;
 
                 // Auto-rename: if this is the first user message and title is default
@@ -190,15 +275,16 @@ export const useDecisionStore = create<DecisionStore>()(
 
                 return {
                     sessions: state.sessions.map(s =>
-                        s.id === state.currentSessionId
+                        s.id === targetSessionId
                             ? { ...s, messages: [...s.messages, msg], title: newTitle }
                             : s
                     )
                 };
             }),
 
-            streamMessageChunk: (chunk) => set((state) => {
-                const currentSession = state.sessions.find(s => s.id === state.currentSessionId);
+            streamMessageChunk: (chunk, sessionId) => set((state) => {
+                const targetSessionId = sessionId ?? state.currentSessionId;
+                const currentSession = state.sessions.find(s => s.id === targetSessionId);
                 if (!currentSession) return state;
 
                 const msgs = [...currentSession.messages];
@@ -215,31 +301,41 @@ export const useDecisionStore = create<DecisionStore>()(
 
                 return {
                     sessions: state.sessions.map(s =>
-                        s.id === state.currentSessionId ? { ...s, messages: newMsgs } : s
+                        s.id === targetSessionId ? { ...s, messages: newMsgs } : s
                     )
                 };
             }),
 
-            updateLastMessage: (content) => set((state) => ({
-                sessions: state.sessions.map(s =>
-                    s.id === state.currentSessionId
-                        ? {
-                            ...s,
-                            messages: s.messages.map((m, i) =>
-                                i === s.messages.length - 1 ? { ...m, content } : m
-                            )
-                        }
-                        : s
-                )
-            })),
+            updateLastMessage: (content, sessionId) => set((state) => {
+                const targetSessionId = sessionId ?? state.currentSessionId;
+                const currentSession = state.sessions.find(s => s.id === targetSessionId);
+                if (!currentSession) return state;
+                return {
+                    sessions: state.sessions.map(s =>
+                        s.id === targetSessionId
+                            ? {
+                                ...s,
+                                messages: s.messages.map((m, i) =>
+                                    i === s.messages.length - 1 ? { ...m, content } : m
+                                )
+                            }
+                            : s
+                    )
+                };
+            }),
 
-            setAnalysisData: (data) => set((state) => ({
-                sessions: state.sessions.map(s =>
-                    s.id === state.currentSessionId
-                        ? { ...s, analysis: { ...s.analysis, ...data }, entropyProgress: data.entropy ?? s.entropyProgress }
-                        : s
-                )
-            })),
+            setAnalysisData: (data, sessionId) => set((state) => {
+                const targetSessionId = sessionId ?? state.currentSessionId;
+                const currentSession = state.sessions.find(s => s.id === targetSessionId);
+                if (!currentSession) return state;
+                return {
+                    sessions: state.sessions.map(s =>
+                        s.id === targetSessionId
+                            ? { ...s, analysis: { ...s.analysis, ...data }, entropyProgress: data.entropy ?? s.entropyProgress }
+                            : s
+                    )
+                };
+            }),
 
             setEntropyProgress: (progress) => set((state) => ({
                 sessions: state.sessions.map(s =>
@@ -307,24 +403,38 @@ export const useDecisionStore = create<DecisionStore>()(
                 currentSessionId: state.currentSessionId,
                 apiKey: state.apiKey,
                 userMemory: state.userMemory,
+                hasSeenGuide: state.hasSeenGuide,
             }),
-            migrate: (persistedState: any, version: number) => {
+            migrate: (persistedState: unknown, version: number) => {
                 if (version === 0) {
-                    // Migration from v0 (Single Session) to v1 (Multi-Session)
-                    const oldState = persistedState as any;
-                    const initialSession: Session = {
-                        id: 'default-session',
-                        title: '历史会话',
-                        messages: oldState.messages || [],
-                        analysis: oldState.analysis || { 
+                    const oldState = (persistedState && typeof persistedState === 'object')
+                        ? (persistedState as Record<string, unknown>)
+                        : {};
+
+                    const migratedMessages = Array.isArray(oldState.messages)
+                        ? (oldState.messages as Message[])
+                        : [];
+
+                    const migratedAnalysis = (oldState.analysis && typeof oldState.analysis === 'object')
+                        ? (oldState.analysis as AnalysisState)
+                        : { 
                             score: 0, 
                             risk_level: "待评估", 
                             entropy: 0, 
                             risk_factors: [],
                             dimensions: { logic: 0, feasibility: 0, risk: 0, value: 0, timing: 0, resource: 0 }
-                        },
-                        entropyProgress: oldState.entropyProgress || 0,
-                        isDebateMode: oldState.isDebateMode || false,
+                        };
+
+                    const migratedEntropyProgress = typeof oldState.entropyProgress === 'number' ? oldState.entropyProgress : 0;
+                    const migratedIsDebateMode = typeof oldState.isDebateMode === 'boolean' ? oldState.isDebateMode : false;
+
+                    const initialSession: Session = {
+                        id: 'default-session',
+                        title: '历史会话',
+                        messages: migratedMessages,
+                        analysis: migratedAnalysis,
+                        entropyProgress: migratedEntropyProgress,
+                        isDebateMode: migratedIsDebateMode,
                         decisionMode: 'standard',
                         createdAt: Date.now()
                     };

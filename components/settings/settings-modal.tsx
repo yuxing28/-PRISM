@@ -1,9 +1,9 @@
 "use client";
 
+import React, { useState } from "react";
 import { useDecisionStore } from "@/lib/store";
 import { X, Key, Trash2, Sparkles, Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
 
 export function SettingsModal() {
     const { apiKey, setApiKey, showSettings, toggleSettings, clearAllData } = useDecisionStore();
@@ -18,17 +18,17 @@ export function SettingsModal() {
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/10 backdrop-blur-md animate-in fade-in duration-500">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/10 backdrop-blur-md animate-in fade-in duration-500 p-4">
             <div
-                className="glass-modal-premium w-full max-w-[440px] p-10 relative animate-in zoom-in-95 duration-500 pb-12"
+                className="glass-modal-premium w-full max-w-[440px] p-6 lg:p-10 relative animate-in zoom-in-95 duration-500 pb-8 lg:pb-12"
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Header Area */}
-                <div className="flex justify-between items-start mb-10">
+                <div className="flex justify-between items-start mb-6 lg:mb-10">
                     <div className="space-y-1">
-                        <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
+                        <h2 className="text-xl lg:text-2xl font-black text-slate-800 flex items-center gap-3">
                             <div className="p-2 rounded-xl bg-sky-500/10 text-sky-600 animate-pulse-slow">
-                                <Sparkles className="w-6 h-6 fill-current opacity-80" />
+                                <Sparkles className="w-5 h-5 lg:w-6 lg:h-6 fill-current opacity-80" />
                             </div>
                             用户设置
                         </h2>
@@ -43,7 +43,7 @@ export function SettingsModal() {
                     </button>
                 </div>
 
-                <div className="space-y-8">
+                <div className="space-y-6 lg:space-y-8">
                     {/* API Key Input Section */}
                     <div className="space-y-3">
                         <label className="text-[13px] font-bold text-slate-600 px-1 ml-1 flex items-center gap-2">

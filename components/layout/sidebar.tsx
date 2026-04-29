@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Trash2, PanelLeftClose, PanelLeft, Check, X } from "lucide-react";
+import { Trash2, PanelLeftClose, PanelLeft, Check, X, Edit2, Clock, CheckCircle } from "lucide-react";
 import { useDecisionStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -199,19 +199,54 @@ export function Sidebar({ onLogoClick, onSessionSelect }: SidebarProps) {
                                             {session.title}
                                         </span>
 
-                                        {sessions.length > 1 && (
+                                        {/* 复盘状态标签 */}
+                                        {!sidebarCollapsed && session.analysis.score > 0 && (
+                                            <div className="flex items-center gap-1 mt-1">
+                                                {session.reviewResult ? (
+                                                    <span className="flex items-center gap-1 text-[9px] text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full">
+                                                        <CheckCircle className="w-2.5 h-2.5" />
+                                                        已复盘
+                                                    </span>
+                                                ) : session.reviewReminder ? (
+                                                    <span className="flex items-center gap-1 text-[9px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full">
+                                                        <Clock className="w-2.5 h-2.5" />
+                                                        待复盘
+                                                    </span>
+                                                ) : null}
+                                            </div>
+                                        )}
+
+                                        {/* Action Buttons: Always visible on mobile/active, hover on desktop */}
+                                        <div className={cn(
+                                            "flex items-center gap-1 transition-opacity duration-200",
+                                            currentSessionId === session.id ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                                        )}>
                                             <button
                                                 onClick={(e) => {
                                                     e.stopPropagation();
-                                                    if (confirm("确定要删除这个决策吗？")) {
-                                                        deleteSession(session.id);
-                                                    }
+                                                    startEditing(session.id, session.title);
                                                 }}
-                                                className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-rose-50/60 hover:text-rose-500 transition-all ml-1"
+                                                className="p-1.5 rounded-lg hover:bg-sky-50 text-slate-400 hover:text-sky-600 transition-all"
+                                                title="重命名"
                                             >
-                                                <Trash2 className="w-3.5 h-3.5" />
+                                                <Edit2 className="w-3.5 h-3.5" />
                                             </button>
-                                        )}
+                                            
+                                            {sessions.length > 1 && (
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        if (confirm("确定要删除这个决策吗？")) {
+                                                            deleteSession(session.id);
+                                                        }
+                                                    }}
+                                                    className="p-1.5 rounded-lg hover:bg-rose-50 text-slate-400 hover:text-rose-500 transition-all"
+                                                    title="删除"
+                                                >
+                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                </button>
+                                            )}
+                                        </div>
                                     </>
                                 )}
                             </>
@@ -221,7 +256,7 @@ export function Sidebar({ onLogoClick, onSessionSelect }: SidebarProps) {
             </div>
 
             {/* User Settings */}
-            <div className="pt-4 border-t border-slate-200/50 mt-auto">
+            <div className="pt-4 border-t border-slate-200/50 mt-auto pb-24 lg:pb-0">
                 <div
                     onClick={() => toggleSettings(true)}
                     className={cn(

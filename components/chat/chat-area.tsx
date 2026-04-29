@@ -3,7 +3,7 @@
 import { useRef, useEffect } from "react";
 import { Send, Zap, User } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useDecisionStore, Message } from "@/lib/store";
+import { useDecisionStore, Message, UserMemory } from "@/lib/store";
 import { DecisionTemplates } from "./decision-templates";
 
 // ============ JSON 验证层 ============
@@ -23,6 +23,39 @@ interface AnalysisData {
     entropy: number;
     risk_factors: string[];
     dimensions: DimensionScores;
+    decision_type?: string;
+    min_viable_action?: {
+        summary: string;
+        reason: string;
+        how_to_verify: string;
+    };
+    stop_loss?: {
+        condition: string;
+        action: string;
+        reason: string;
+    };
+    escalation?: {
+        condition: string;
+        action: string;
+        reason: string;
+    };
+    score_interpretation?: string;
+    risk_priorities?: Array<{
+        factor: string;
+        priority: 'high' | 'medium' | 'low';
+    }>;
+    mode_recommendation?: {
+        recommended: 'fast' | 'standard' | 'complete';
+        reason: string;
+        estimated_time: string;
+        alternative?: string;
+    };
+    info_progress?: {
+        collected: string[];
+        needed: string[];
+        min_required: number;
+        current: number;
+    };
 }
 
 const VALID_RISK_LEVELS = ['低风险', '中等风险', '高风险', '致命风险'];
@@ -37,10 +70,30 @@ function validateAndFixAnalysisData(data: unknown): AnalysisData | null {
     const raw = data as Record<string, unknown>;
     
     try {
+        // 验证并修复 dimensions
+        const rawDimensions = (raw.dimensions || {}) as Record<string, unknown>;
+        const dimensions: DimensionScores = {
+            logic: validateDimensionScore(rawDimensions.logic),
+            feasibility: validateDimensionScore(rawDimensions.feasibility),
+            risk: validateDimensionScore(rawDimensions.risk),
+            value: validateDimensionScore(rawDimensions.value),
+            timing: validateDimensionScore(rawDimensions.timing),
+            resource: validateDimensionScore(rawDimensions.resource),
+        };
+
         // 验证并修复 score (0-10)
-        let score = Number(raw.score);
-        if (isNaN(score)) score = 5; // 默认中等分数
+        const rawScore = raw.score;
+        let score = (rawScore === null || rawScore === undefined) ? NaN : Number(rawScore);
+        const dimensionScores = Object.values(dimensions);
+        const avgScore = dimensionScores.reduce((sum, val) => sum + val, 0) / dimensionScores.length;
+        if (isNaN(score)) {
+            score = avgScore;
+        }
+        if (isNaN(score)) score = 5;
         score = Math.max(0, Math.min(10, Math.round(score)));
+        if (score === 0) {
+            score = Math.max(1, Math.min(10, Math.round(avgScore)));
+        }
         
         // 验证并修复 risk_level
         let risk_level = String(raw.risk_level || '');
@@ -72,19 +125,75 @@ function validateAndFixAnalysisData(data: unknown): AnalysisData | null {
         if (risk_factors.length === 0) {
             risk_factors = ['需要进一步分析'];
         }
+
+        // 解析新字段
+        const decision_type = raw.decision_type ? String(raw.decision_type) : undefined;
         
-        // 验证并修复 dimensions
-        const rawDimensions = (raw.dimensions || {}) as Record<string, unknown>;
-        const dimensions: DimensionScores = {
-            logic: validateDimensionScore(rawDimensions.logic),
-            feasibility: validateDimensionScore(rawDimensions.feasibility),
-            risk: validateDimensionScore(rawDimensions.risk),
-            value: validateDimensionScore(rawDimensions.value),
-            timing: validateDimensionScore(rawDimensions.timing),
-            resource: validateDimensionScore(rawDimensions.resource),
+        const rawMva = raw.min_viable_action as Record<string, unknown> | undefined;
+        const min_viable_action = rawMva ? {
+            summary: String(rawMva.summary || ''),
+            reason: String(rawMva.reason || ''),
+            how_to_verify: String(rawMva.how_to_verify || '')
+        } : undefined;
+
+        const rawSl = raw.stop_loss as Record<string, unknown> | undefined;
+        const stop_loss = rawSl ? {
+            condition: String(rawSl.condition || ''),
+            action: String(rawSl.action || ''),
+            reason: String(rawSl.reason || '')
+        } : undefined;
+
+        const rawEsc = raw.escalation as Record<string, unknown> | undefined;
+        const escalation = rawEsc ? {
+            condition: String(rawEsc.condition || ''),
+            action: String(rawEsc.action || ''),
+            reason: String(rawEsc.reason || '')
+        } : undefined;
+
+        const score_interpretation = raw.score_interpretation ? String(raw.score_interpretation) : undefined;
+
+        const rawRp = raw.risk_priorities as Array<{factor?: unknown; priority?: unknown}> | undefined;
+        const risk_priorities = rawRp ? 
+            rawRp
+                .filter(p => p && typeof p.factor === 'string')
+                .map(p => ({
+                    factor: String(p.factor),
+                    priority: (p.priority === 'high' || p.priority === 'medium' || p.priority === 'low') 
+                        ? p.priority as 'high' | 'medium' | 'low' : 'medium' as const
+                })) : undefined;
+
+        const rawMr = raw.mode_recommendation as Record<string, unknown> | undefined;
+        const mode_recommendation = rawMr ? {
+            recommended: (rawMr.recommended === 'fast' || rawMr.recommended === 'standard' || rawMr.recommended === 'complete') 
+                ? rawMr.recommended as 'fast' | 'standard' | 'complete' : 'standard' as const,
+            reason: String(rawMr.reason || ''),
+            estimated_time: String(rawMr.estimated_time || ''),
+            alternative: rawMr.alternative ? String(rawMr.alternative) : undefined
+        } : undefined;
+
+        const rawIp = raw.info_progress as Record<string, unknown> | undefined;
+        const info_progress = rawIp ? {
+            collected: Array.isArray(rawIp.collected) ? rawIp.collected.map((c: unknown) => String(c)) : [],
+            needed: Array.isArray(rawIp.needed) ? rawIp.needed.map((n: unknown) => String(n)) : [],
+            min_required: typeof rawIp.min_required === 'number' ? rawIp.min_required : 3,
+            current: typeof rawIp.current === 'number' ? rawIp.current : 0
+        } : undefined;
+        
+        return { 
+            score, 
+            risk_level, 
+            entropy, 
+            risk_factors, 
+            dimensions,
+            decision_type,
+            min_viable_action,
+            stop_loss,
+            escalation,
+            score_interpretation,
+            risk_priorities,
+            mode_recommendation,
+            info_progress
         };
-        
-        return { score, risk_level, entropy, risk_factors, dimensions };
     } catch (e) {
         console.error('Analysis data validation failed:', e);
         return null;
@@ -98,28 +207,90 @@ function validateDimensionScore(value: unknown): number {
 }
 
 /**
- * 从文本中提取 JSON 块
+ * 从文本中提取 JSON 块（支持多种格式）
  */
 function extractJsonBlock(text: string): string | null {
-    // 方法1: 标准分隔符（支持带或不带 ** 的格式）
-    // 匹配: ___JSON_BLOCK_START___ 或 ___**JSON_BLOCK_START**___
-    const blockRegex = /___\*{0,2}JSON_BLOCK_START\*{0,2}___([\s\S]*?)___\*{0,2}JSON_BLOCK_END\*{0,2}___/;
-    const blockMatch = text.match(blockRegex);
-    if (blockMatch) return blockMatch[1].trim();
+    // 方法1: 新格式 JSON_DATA_START ... JSON_DATA_END
+    const dataMarkerRegex = /JSON_DATA_START\s*([\s\S]*?)\s*JSON_DATA_END/g;
+    const dataMatches = Array.from(text.matchAll(dataMarkerRegex));
+    if (dataMatches.length > 0) {
+        const last = dataMatches[dataMatches.length - 1];
+        return (last?.[1] ?? '').trim() || null;
+    }
+
+    // 方法2: 旧格式 ___JSON_BLOCK_START___ ... ___JSON_BLOCK_END___（兼容）
+    const blockRegex = /___\*{0,2}JSON_BLOCK_START\*{0,2}___([\s\S]*?)___\*{0,2}JSON_BLOCK_END\*{0,2}___/g;
+    const blockMatches = Array.from(text.matchAll(blockRegex));
+    if (blockMatches.length > 0) {
+        const last = blockMatches[blockMatches.length - 1];
+        return (last?.[1] ?? '').trim() || null;
+    }
     
-    // 方法2: 尝试找 ```json 代码块
-    const codeBlockRegex = /```json\s*([\s\S]*?)```/;
-    const codeMatch = text.match(codeBlockRegex);
-    if (codeMatch) return codeMatch[1].trim();
+    // 方法3: markdown 代码块格式
+    const codeBlockRegex = /```json\s*([\s\S]*?)```/g;
+    const codeMatches = Array.from(text.matchAll(codeBlockRegex));
+    if (codeMatches.length > 0) {
+        const last = codeMatches[codeMatches.length - 1];
+        return (last?.[1] ?? '').trim() || null;
+    }
     
-    // 方法3: 尝试找最后一个完整的 JSON 对象
-    const jsonObjectRegex = /\{[\s\S]*"score"[\s\S]*"dimensions"[\s\S]*\}/g;
+    // 方法4: 找最后一个包含 score 和 dimensions 的 JSON 对象
+    const jsonObjectRegex = /\{\s*"score"[\s\S]*?"dimensions"[\s\S]*?\}/g;
     const matches = text.match(jsonObjectRegex);
     if (matches && matches.length > 0) {
         return matches[matches.length - 1];
     }
     
     return null;
+}
+
+/**
+ * 从纯文本中兜底提取关键分析数据（JSON 完全失败时使用）
+ */
+function extractAnalysisFromText(text: string): AnalysisData | null {
+    // 尝试从文本中提取分数
+    const scoreMatch = text.match(/综合评分[：:]\s*(\d+)/);
+    const score = scoreMatch ? parseInt(scoreMatch[1]) : 5;
+
+    // 尝试提取风险等级
+    let risk_level = '中等风险';
+    if (text.includes('低风险')) risk_level = '低风险';
+    else if (text.includes('致命风险')) risk_level = '致命风险';
+    else if (text.includes('高风险')) risk_level = '高风险';
+
+    // 尝试提取信息完整度
+    const entropyMatch = text.match(/信息完整度[：:]\s*(\d+)/);
+    const entropy = entropyMatch ? parseInt(entropyMatch[1]) : 40;
+
+    // 提取风险因素（找"风险"相关句子）
+    const riskFactors: string[] = [];
+    const riskSentences = text.match(/[^。！？]*风险[^。！？]*/g);
+    if (riskSentences) {
+        riskSentences.slice(0, 3).forEach(s => {
+            const cleaned = s.replace(/[#\-•🔴🟡🟢]/g, '').trim();
+            if (cleaned.length > 5 && cleaned.length < 50) {
+                riskFactors.push(cleaned);
+            }
+        });
+    }
+    if (riskFactors.length === 0) {
+        riskFactors.push('需要进一步分析');
+    }
+
+    return {
+        score: Math.max(0, Math.min(10, score)),
+        risk_level,
+        entropy: Math.max(0, Math.min(100, entropy)),
+        risk_factors: riskFactors,
+        dimensions: {
+            logic: score,
+            feasibility: score,
+            risk: score,
+            value: score,
+            timing: score,
+            resource: score,
+        }
+    };
 }
 
 /**
@@ -222,7 +393,9 @@ export function ChatArea() {
         apiKey,
         userMemory,
         updateUserMemory,
-        addKeyDecision
+        addKeyDecision,
+        hasSeenGuide,
+        setHasSeenGuide
     } = useDecisionStore();
 
     const currentSession = sessions.find(s => s.id === currentSessionId);
@@ -232,6 +405,7 @@ export function ChatArea() {
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const scrollAreaRef = useRef<HTMLDivElement>(null);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -240,6 +414,14 @@ export function ChatArea() {
     useEffect(() => {
         scrollToBottom();
     }, [messages]);
+
+    // 自动调整输入框高度
+    useEffect(() => {
+        if (textareaRef.current) {
+            textareaRef.current.style.height = 'auto';
+            textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+        }
+    }, [currentInput]);
 
     const handleTemplateSelect = (prompt: string) => {
         setInput(prompt);
@@ -303,17 +485,25 @@ export function ChatArea() {
         }
     };
 
-    // 单次 API 调用
-    const callChatAPI = async (apiMessages: Message[]): Promise<string> => {
+    const callChatAPI = async (
+        apiMessages: Message[],
+        opts: {
+            sessionId: string;
+            isDebateMode: boolean;
+            decisionMode: 'fast' | 'standard' | 'complete';
+            apiKey: string;
+            userMemory: UserMemory;
+        }
+    ): Promise<string> => {
         const response = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 messages: apiMessages,
-                isDebateMode: isDebateMode,
-                decisionMode: decisionMode,
-                apiKey: apiKey,
-                userMemory: userMemory // 传递用户画像
+                isDebateMode: opts.isDebateMode,
+                decisionMode: opts.decisionMode,
+                apiKey: opts.apiKey,
+                userMemory: opts.userMemory
             }),
         });
 
@@ -323,16 +513,39 @@ export function ChatArea() {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let fullResponseText = "";
+        let isCollectingJSON = false;
+        // 支持新旧两种 marker 格式
+        const JSON_START_MARKER_REGEX = /JSON_DATA_START|___\*{0,2}JSON_BLOCK_START\*{0,2}___/;
+        const guardLen = 'JSON_DATA_START'.length - 1;
+        let pendingVisible = "";
+        let sseBuffer = "";
+        let isFirstChunk = true;
+
+        // 辅助函数：输出可见内容（首块替换占位，后续追加）
+        const emitVisible = (text: string) => {
+            if (!text) return;
+            if (isFirstChunk) {
+                updateLastMessage(text, opts.sessionId);
+                isFirstChunk = false;
+            } else {
+                streamMessageChunk(text, opts.sessionId);
+            }
+        };
 
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split('\n');
+            sseBuffer += decoder.decode(value, { stream: true });
 
-            for (const line of lines) {
-                const trimmed = line.trim();
+            while (true) {
+                const newlineIndex = sseBuffer.indexOf('\n');
+                if (newlineIndex === -1) break;
+
+                const rawLine = sseBuffer.slice(0, newlineIndex);
+                sseBuffer = sseBuffer.slice(newlineIndex + 1);
+
+                const trimmed = rawLine.trim();
                 if (!trimmed || !trimmed.startsWith('data: ')) continue;
 
                 const data = trimmed.slice(6);
@@ -341,9 +554,28 @@ export function ChatArea() {
                 try {
                     const json = JSON.parse(data);
                     const content = json.choices?.[0]?.delta?.content;
-                    if (content) {
-                        streamMessageChunk(content);
-                        fullResponseText += content;
+                    if (!content) continue;
+
+                    fullResponseText += content;
+
+                    if (isCollectingJSON) continue;
+
+                    pendingVisible += content;
+
+                    const markerIndex = pendingVisible.search(JSON_START_MARKER_REGEX);
+                    if (markerIndex !== -1) {
+                        const visiblePart = pendingVisible.slice(0, markerIndex);
+                        emitVisible(visiblePart);
+                        pendingVisible = "";
+                        isCollectingJSON = true;
+                        continue;
+                    }
+
+                    if (pendingVisible.length > guardLen) {
+                        const safeLen = pendingVisible.length - guardLen;
+                        const safePart = pendingVisible.slice(0, safeLen);
+                        emitVisible(safePart);
+                        pendingVisible = pendingVisible.slice(safeLen);
                     }
                 } catch (e) {
                     console.error('SSE Error', e);
@@ -351,19 +583,70 @@ export function ChatArea() {
             }
         }
 
+        sseBuffer += decoder.decode();
+        if (sseBuffer.trim().length > 0) {
+            const lines = sseBuffer.split('\n');
+            for (const rawLine of lines) {
+                const trimmed = rawLine.trim();
+                if (!trimmed || !trimmed.startsWith('data: ')) continue;
+
+                const data = trimmed.slice(6);
+                if (data === '[DONE]') continue;
+
+                try {
+                    const json = JSON.parse(data);
+                    const content = json.choices?.[0]?.delta?.content;
+                    if (!content) continue;
+
+                    fullResponseText += content;
+                    if (isCollectingJSON) continue;
+
+                    pendingVisible += content;
+
+                    const markerIndex = pendingVisible.search(JSON_START_MARKER_REGEX);
+                    if (markerIndex !== -1) {
+                        const visiblePart = pendingVisible.slice(0, markerIndex);
+                        emitVisible(visiblePart);
+                        pendingVisible = "";
+                        isCollectingJSON = true;
+                        continue;
+                    }
+
+                    if (pendingVisible.length > guardLen) {
+                        const safeLen = pendingVisible.length - guardLen;
+                        const safePart = pendingVisible.slice(0, safeLen);
+                        emitVisible(safePart);
+                        pendingVisible = pendingVisible.slice(safeLen);
+                    }
+                } catch (e) {
+                    console.error('SSE Error', e);
+                }
+            }
+        }
+
+        if (!isCollectingJSON && pendingVisible) {
+            emitVisible(pendingVisible);
+        }
+
         return fullResponseText;
     };
 
     const handleSendMessage = async () => {
-        if (!currentInput.trim() || isLoading) return;
+        if (!currentInput.trim() || isLoading || !currentSessionId) return;
+
+        const sessionIdAtSend = currentSessionId;
+        const isDebateModeAtSend = isDebateMode;
+        const decisionModeAtSend = decisionMode;
+        const apiKeyAtSend = apiKey;
+        const userMemoryAtSend = userMemory;
 
         const userMsg: Message = { role: 'user', content: currentInput };
-        addMessage(userMsg);
+        addMessage(userMsg, sessionIdAtSend);
         setInput('');
         setLoading(true);
 
-        // Initial AI placeholder
-        addMessage({ role: 'assistant', content: '' });
+        // 初始占位消息，显示连接状态
+        addMessage({ role: 'assistant', content: '正在思考...' }, sessionIdAtSend);
 
         const MAX_RETRIES = 2;
         let retryCount = 0;
@@ -374,10 +657,22 @@ export function ChatArea() {
             const apiMessages = [...messages, userMsg];
             
             // 首次调用
-            fullResponseText = await callChatAPI(apiMessages);
+            fullResponseText = await callChatAPI(apiMessages, {
+                sessionId: sessionIdAtSend,
+                isDebateMode: isDebateModeAtSend,
+                decisionMode: decisionModeAtSend,
+                apiKey: apiKeyAtSend,
+                userMemory: userMemoryAtSend
+            });
             
             // 尝试解析 JSON
             analysisData = parseAnalysisData(fullResponseText);
+
+            const hasJsonCandidate = /JSON_DATA_START|JSON_BLOCK_START|```json|"score"\s*:/.test(fullResponseText);
+            if (!analysisData && !hasJsonCandidate) {
+                updateLastMessage(fullResponseText.trim(), sessionIdAtSend);
+                return;
+            }
             
             // 如果解析失败，进行重试
             while (!analysisData && retryCount < MAX_RETRIES) {
@@ -385,7 +680,7 @@ export function ChatArea() {
                 console.log(`JSON 解析失败，正在重试 (${retryCount}/${MAX_RETRIES})...`);
                 
                 // 添加重试提示到消息流
-                streamMessageChunk(`\n\n🔄 正在重新生成分析数据...`);
+                streamMessageChunk(`\n\n🔄 正在重新生成分析数据...`, sessionIdAtSend);
                 
                 // 构建重试消息，要求重新输出 JSON
                 const retryMessages: Message[] = [
@@ -393,12 +688,18 @@ export function ChatArea() {
                     { role: 'assistant', content: fullResponseText },
                     { 
                         role: 'user', 
-                        content: '请重新输出JSON数据块，确保格式正确。只需要输出 ___JSON_BLOCK_START___ 和 ___JSON_BLOCK_END___ 之间的JSON内容即可。' 
+                        content: '请重新输出JSON数据块，格式：JSON_DATA_START 后跟单行JSON对象，最后 JSON_DATA_END。不要用markdown代码块。' 
                     }
                 ];
                 
                 // 重新调用 API
-                const retryResponse = await callChatAPI(retryMessages);
+                const retryResponse = await callChatAPI(retryMessages, {
+                    sessionId: sessionIdAtSend,
+                    isDebateMode: isDebateModeAtSend,
+                    decisionMode: decisionModeAtSend,
+                    apiKey: apiKeyAtSend,
+                    userMemory: userMemoryAtSend
+                });
                 
                 // 合并响应用于解析
                 const combinedText = fullResponseText + '\n' + retryResponse;
@@ -413,49 +714,49 @@ export function ChatArea() {
             // 处理解析结果
             if (analysisData) {
                 // 更新 Store
-                useDecisionStore.getState().setAnalysisData(analysisData);
+                useDecisionStore.getState().setAnalysisData(analysisData, sessionIdAtSend);
                 
                 // 从分析结果中学习用户画像
                 extractAndUpdateUserProfile(analysisData, currentInput, fullResponseText);
                 
-                // 清理消息中的 JSON 块（支持带或不带 ** 的格式）
-                const jsonBlockRegex = /___\*{0,2}JSON_BLOCK_START\*{0,2}___[\s\S]*?___\*{0,2}JSON_BLOCK_END\*{0,2}___/g;
+                // 清理消息中的 JSON 块（支持新旧两种格式）
                 const cleanedContent = fullResponseText
-                    .replace(jsonBlockRegex, '')
+                    .replace(/JSON_DATA_START[\s\S]*?JSON_DATA_END/g, '')
+                    .replace(/___\*{0,2}JSON_BLOCK_START\*{0,2}___[\s\S]*?___\*{0,2}JSON_BLOCK_END\*{0,2}___/g, '')
                     .replace(/```json[\s\S]*?```/g, '')
                     .replace(/🔄 正在重新生成分析数据\.\.\./g, '')
                     .trim();
-                updateLastMessage(cleanedContent);
+                updateLastMessage(cleanedContent, sessionIdAtSend);
                 
                 if (retryCount > 0) {
                     console.log(`JSON 解析成功（重试 ${retryCount} 次）`);
                 }
             } else {
-                // 所有重试都失败，使用默认值
-                console.warn('JSON 解析最终失败，使用默认分析数据');
-                const defaultData: AnalysisData = {
+                // 所有重试都失败，尝试从文本中兜底提取
+                console.warn('JSON 解析最终失败，尝试文本兜底提取');
+                const textFallback = extractAnalysisFromText(fullResponseText);
+                const fallbackData = textFallback || {
                     score: 5,
-                    risk_level: '中等风险',
-                    entropy: 50,
+                    risk_level: '中等风险' as const,
+                    entropy: 40,
                     risk_factors: ['分析数据解析异常，建议重新提问'],
-                    dimensions: {
-                        logic: 5,
-                        feasibility: 5,
-                        risk: 5,
-                        value: 5,
-                        timing: 5,
-                        resource: 5
-                    }
+                    dimensions: { logic: 5, feasibility: 5, risk: 5, value: 5, timing: 5, resource: 5 }
                 };
-                useDecisionStore.getState().setAnalysisData(defaultData);
+                useDecisionStore.getState().setAnalysisData(fallbackData, sessionIdAtSend);
                 
-                // 添加提示
-                streamMessageChunk('\n\n⚠️ 分析数据格式异常，已使用默认评估。建议重新描述您的决策问题。');
+                // 清理消息中的 JSON 块
+                const cleanedFallback = fullResponseText
+                    .replace(/JSON_DATA_START[\s\S]*?JSON_DATA_END/g, '')
+                    .replace(/___\*{0,2}JSON_BLOCK_START\*{0,2}___[\s\S]*?___\*{0,2}JSON_BLOCK_END\*{0,2}___/g, '')
+                    .replace(/```json[\s\S]*?```/g, '')
+                    .trim();
+                updateLastMessage(cleanedFallback + (textFallback ? '' : '\n\n⚠️ 部分分析数据未能解析，已尽力提取。如需精确分析请重新提问。'), sessionIdAtSend);
             }
 
         } catch (error) {
             console.error(error);
-            streamMessageChunk('\n\n⚠️ 抱歉，连接中断或服务异常。');
+            // API 完全失败时，更新占位消息为错误提示
+            updateLastMessage('⚠️ 抱歉，连接中断或服务异常。请检查网络或 API Key 后重试。', sessionIdAtSend);
         } finally {
             setLoading(false);
         }
@@ -485,6 +786,76 @@ export function ChatArea() {
                             onSelect={handleTemplateSelect}
                             className="animate-in fade-in slide-in-from-bottom-4 duration-700"
                         />
+                    </div>
+                )}
+
+                {/* 首次使用引导 - 模式选择卡片 */}
+                {!hasSeenGuide && messages.length === 0 && (
+                    <div className="mb-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+                        <div className="text-center mb-4">
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-[0.15em]">选择你的决策模式</p>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-4xl mx-auto">
+                            {/* 快速模式 */}
+                            <button
+                                onClick={() => { setDecisionMode('fast'); setHasSeenGuide(true); }}
+                                className="group glass-card-premium p-5 text-left hover:scale-[1.02] transition-all duration-300"
+                            >
+                                <div className="flex items-center gap-2 mb-3">
+                                    <span className="w-8 h-8 rounded-xl bg-emerald-500 flex items-center justify-center">
+                                        <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                        </svg>
+                                    </span>
+                                    <span className="font-bold text-emerald-600">快速模式</span>
+                                </div>
+                                <p className="text-xs text-slate-600 mb-3">5分钟内获得初步决策建议</p>
+                                <div className="flex items-center gap-1 text-[10px] text-slate-400">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                                    <span>适合快速验证想法</span>
+                                </div>
+                            </button>
+
+                            {/* 标准模式 */}
+                            <button
+                                onClick={() => { setDecisionMode('standard'); setHasSeenGuide(true); }}
+                                className="group glass-card-premium p-5 text-left hover:scale-[1.02] transition-all duration-300"
+                            >
+                                <div className="flex items-center gap-2 mb-3">
+                                    <span className="w-8 h-8 rounded-xl bg-sky-500 flex items-center justify-center">
+                                        <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                                        </svg>
+                                    </span>
+                                    <span className="font-bold text-sky-600">标准模式</span>
+                                </div>
+                                <p className="text-xs text-slate-600 mb-3">15分钟深度多维分析</p>
+                                <div className="flex items-center gap-1 text-[10px] text-slate-400">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-sky-400"></span>
+                                    <span>推荐日常重大决策</span>
+                                </div>
+                            </button>
+
+                            {/* 完整模式 */}
+                            <button
+                                onClick={() => { setDecisionMode('complete'); setHasSeenGuide(true); }}
+                                className="group glass-card-premium p-5 text-left hover:scale-[1.02] transition-all duration-300"
+                            >
+                                <div className="flex items-center gap-2 mb-3">
+                                    <span className="w-8 h-8 rounded-xl bg-violet-500 flex items-center justify-center">
+                                        <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                                        </svg>
+                                    </span>
+                                    <span className="font-bold text-violet-600">完整模式</span>
+                                </div>
+                                <p className="text-xs text-slate-600 mb-3">1小时+战略级全面分析</p>
+                                <div className="flex items-center gap-1 text-[10px] text-slate-400">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-violet-400"></span>
+                                    <span>适合人生关键决策</span>
+                                </div>
+                            </button>
+                        </div>
                     </div>
                 )}
 
@@ -545,6 +916,7 @@ export function ChatArea() {
                 )}>
                     <div className="flex items-end gap-2 lg:gap-3 px-2 lg:px-4">
                         <textarea
+                            ref={textareaRef}
                             value={currentInput}
                             onChange={(e) => setInput(e.target.value)}
                             onKeyDown={(e) => {

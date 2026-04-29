@@ -22,9 +22,12 @@ export function MainLayout({ children, onLogoClick }: MainLayoutProps) {
             <div className="bg-blob bg-blob-3 opacity-50" />
 
             {/* Mobile Header */}
-            <div className="lg:hidden fixed top-0 left-0 right-0 h-14 flex items-center justify-between px-4 border-b border-white/50 backdrop-blur-xl bg-white/70 z-50">
+            <div className="lg:hidden fixed top-0 left-0 right-0 h-14 flex items-center justify-between px-4 border-b border-white/50 backdrop-blur-xl bg-white/70 z-[60]">
                 <button
-                    onClick={() => toggleMobileMenu()}
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        toggleMobileMenu();
+                    }}
                     className="p-2 rounded-xl hover:bg-white/50 text-slate-600 transition-all"
                 >
                     {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
@@ -82,8 +85,8 @@ export function MainLayout({ children, onLogoClick }: MainLayoutProps) {
 
             {/* 信息面板容器 - Desktop: 固定显示, Mobile: 右侧抽屉 */}
             <div className={cn(
-                "glass-control-panel h-full relative z-50 flex-shrink-0 transition-transform duration-300",
-                "lg:translate-x-0 lg:relative",
+                "glass-control-panel h-full relative z-[70] flex-shrink-0 transition-transform duration-300 lg:!bg-white/40 !bg-white/95",
+                "lg:translate-x-0 lg:relative lg:z-50",
                 "fixed top-0 right-0",
                 mobilePanelOpen ? "translate-x-0" : "translate-x-full lg:translate-x-0"
             )}>
