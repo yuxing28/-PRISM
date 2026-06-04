@@ -396,58 +396,15 @@ export const useDecisionStore = create<DecisionStore>()(
         }),
         {
             name: 'decision-ai-storage',
-            version: 1, // Upgrade to version 1
+            version: 1,
             storage: createJSONStorage(() => localStorage),
             partialize: (state) => ({
                 sessions: state.sessions,
                 currentSessionId: state.currentSessionId,
-                apiKey: state.apiKey,
                 userMemory: state.userMemory,
                 hasSeenGuide: state.hasSeenGuide,
             }),
-            migrate: (persistedState: unknown, version: number) => {
-                if (version === 0) {
-                    const oldState = (persistedState && typeof persistedState === 'object')
-                        ? (persistedState as Record<string, unknown>)
-                        : {};
-
-                    const migratedMessages = Array.isArray(oldState.messages)
-                        ? (oldState.messages as Message[])
-                        : [];
-
-                    const migratedAnalysis = (oldState.analysis && typeof oldState.analysis === 'object')
-                        ? (oldState.analysis as AnalysisState)
-                        : { 
-                            score: 0, 
-                            risk_level: "待评估", 
-                            entropy: 0, 
-                            risk_factors: [],
-                            dimensions: { logic: 0, feasibility: 0, risk: 0, value: 0, timing: 0, resource: 0 }
-                        };
-
-                    const migratedEntropyProgress = typeof oldState.entropyProgress === 'number' ? oldState.entropyProgress : 0;
-                    const migratedIsDebateMode = typeof oldState.isDebateMode === 'boolean' ? oldState.isDebateMode : false;
-
-                    const initialSession: Session = {
-                        id: 'default-session',
-                        title: '历史会话',
-                        messages: migratedMessages,
-                        analysis: migratedAnalysis,
-                        entropyProgress: migratedEntropyProgress,
-                        isDebateMode: migratedIsDebateMode,
-                        decisionMode: 'standard',
-                        createdAt: Date.now()
-                    };
-                    return {
-                        ...oldState,
-                        sessions: [initialSession],
-                        currentSessionId: 'default-session',
-                    };
-                }
-                return persistedState;
-            },
             onRehydrateStorage: () => {
-                // Ensure at least one session exists if it's empty after rehydration
                 return (rehydratedState) => {
                     if (rehydratedState && rehydratedState.sessions.length === 0) {
                         rehydratedState.createNewSession('首个决策');

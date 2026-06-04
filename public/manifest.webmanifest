@@ -1,0 +1,19 @@
+{
+  "name": "智镜 PRISM - AI 理性决策外脑",
+  "short_name": "智镜",
+  "description": "防骗避坑、买房置业、化解家庭分歧——让 AI 帮你做一次决策体检。",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f0f9ff",
+  "theme_color": "#0ea5e9",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "/logo-light.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["productivity", "lifestyle"]
+}

@@ -28,7 +28,8 @@ describe('Chat API路由测试', () => {
     }
     
     for (const msg of body.messages) {
-      if (!msg.role || !msg.content) {
+      const m = msg as { role?: string; content?: string };
+      if (!m.role || !m.content) {
         return { valid: false, error: 'each message must have role and content' };
       }
     }
