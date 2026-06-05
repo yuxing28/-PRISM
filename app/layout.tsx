@@ -136,7 +136,7 @@ export default function RootLayout({
             </Script>
             <div
               id="turnstile-container"
-              style={{ position: 'absolute', left: '-9999px', top: '-9999px', width: '1px', height: '1px' }}
+              style={{ position: 'fixed', bottom: '12px', right: '12px', zIndex: 50, opacity: 0.85 }}
               aria-hidden="true"
             />
           </>
