@@ -76,21 +76,10 @@ export function ChatArea() {
         return [...firstRound, ...recent];
     };
 
-    const getTurnstileTokenSafely = async (): Promise<string> => {
-        if (typeof window === 'undefined') return '';
-        const w = window as unknown as { getTurnstileToken?: () => Promise<string>; turnstile?: unknown };
-        if (typeof w.getTurnstileToken === 'function') {
-            try { return await w.getTurnstileToken(); } catch { return ''; }
-        }
-        return '';
-    };
-
     const callChatAPI = async (
         apiMessages: Message[],
         opts: { sessionId: string; isDebateMode: boolean; decisionMode: 'fast' | 'standard' | 'complete'; userMemory: UserMemory }
     ): Promise<string> => {
-        const turnstileToken = apiKey ? '' : await getTurnstileTokenSafely();
-
         const response = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -100,7 +89,6 @@ export function ChatArea() {
                 decisionMode: opts.decisionMode,
                 userMemory: opts.userMemory,
                 apiKey: apiKey || undefined,
-                turnstileToken: turnstileToken || undefined,
             }),
         });
         if (!response.ok) {
@@ -113,17 +101,16 @@ export function ChatArea() {
         }
         if (!response.body) throw new Error('No response body');
 
-        // 流式性能优化：缓冲写入，每 50ms 批量更新一次 store
+        // 流式性能优化：缓冲写入，每帧批量更新一次 store
         let buffer = "";
         let rafId: ReturnType<typeof requestAnimationFrame> | null = null;
-        let isFirstChunk = true;
-        let resolved = false;
+        let isFirstWrite = true;
 
         const flushBuffer = () => {
             if (buffer) {
-                if (isFirstChunk) {
+                if (isFirstWrite) {
                     updateLastMessage(buffer, opts.sessionId);
-                    isFirstChunk = false;
+                    isFirstWrite = false;
                 } else {
                     streamMessageChunk(buffer, opts.sessionId);
                 }
@@ -133,6 +120,7 @@ export function ChatArea() {
         };
 
         const bufferedWrite = (text: string) => {
+            if (!text) return;
             buffer += text;
             if (!rafId) {
                 rafId = requestAnimationFrame(flushBuffer);
@@ -141,11 +129,9 @@ export function ChatArea() {
 
         try {
             return await readSSEStream(response.body.getReader(), {
-                onFirstChunk: (text) => bufferedWrite(text),
                 onChunk: (text) => bufferedWrite(text),
             });
         } finally {
-            // 确保最后的缓冲内容被写入
             if (rafId) cancelAnimationFrame(rafId);
             flushBuffer();
         }
@@ -223,12 +209,7 @@ export function ChatArea() {
             console.error(error);
             const code = (error as { code?: string })?.code;
             let msg = '⚠️ 抱歉，连接中断或服务异常。请检查网络或 API Key 后重试。';
-            if (code === 'RateLimited') {
-                msg = '⛔ 今日免费体验次数已用完。\n\n点击右上角 ⚙️ 设置 → 在「DeepSeek 接口密钥」中填入您自己的 API Key，即可继续无限使用。\n（您的 key 仅加密存储在本地浏览器，不会上传）';
-                toggleSettings(true);
-            } else if (code === 'TurnstileRequired' || code === 'TurnstileFailed') {
-                msg = '🛡️ 人机验证未通过，请稍等几秒让验证完成，然后重试。';
-            } else if (code === 'APIKeyMissing') {
+            if (code === 'APIKeyMissing') {
                 msg = '🔑 尚未配置 DeepSeek API Key。点击右上角 ⚙️ 设置 → 填入您的 key 后重试。';
                 toggleSettings(true);
             } else if (code === 'UpstreamError') {

@@ -31,7 +31,7 @@ export async function readSSEStream(
     const emitVisible = (text: string) => {
         if (!text) return;
         if (isFirstChunk) {
-            callbacks.onFirstChunk?.(text);
+            callbacks.onChunk?.(text);
             isFirstChunk = false;
         } else {
             callbacks.onChunk?.(text);
