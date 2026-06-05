@@ -90,9 +90,10 @@ export default function RootLayout({
       >
         {turnstileSiteKey && (
           <>
-            <Script
+            <script
               src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad&render=explicit"
-              strategy="afterInteractive"
+              async={false}
+              defer={false}
             />
             <Script id="turnstile-init" strategy="afterInteractive">
               {`
@@ -121,10 +122,6 @@ export default function RootLayout({
                   }
                   return new Promise(function(resolve) {
                     var done = false;
-                    var oldCb = null;
-                    try {
-                      oldCb = window.turnstile.getResponse.bind(window.turnstile);
-                    } catch(e) {}
                     var check = setInterval(function() {
                       if (window.__turnstileToken) { done = true; clearInterval(check); resolve(window.__turnstileToken); }
                     }, 100);
