@@ -105,8 +105,9 @@ export default function RootLayout({
                     window.__turnstileWidgetId = window.turnstile.render(el, {
                       sitekey: '${turnstileSiteKey}',
                       action: 'chat',
-                      appearance: 'interaction-only',
-                      execution: 'execute',
+                      appearance: 'always',
+                      size: 'normal',
+                      execution: 'render',
                       callback: function(token) { window.__turnstileToken = token; },
                       'expired-callback': function() { window.__turnstileToken = ''; },
                       'error-callback': function() { window.__turnstileToken = ''; }
@@ -133,8 +134,7 @@ export default function RootLayout({
             </Script>
             <div
               id="turnstile-container"
-              style={{ position: 'fixed', bottom: '12px', right: '12px', zIndex: 50, opacity: 0.85 }}
-              aria-hidden="true"
+              style={{ position: 'fixed', bottom: '16px', right: '16px', zIndex: 50, width: '300px', height: '65px' }}
             />
           </>
         )}
